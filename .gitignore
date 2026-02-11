@@ -1,5 +1,7 @@
 /runs
-.uv.lock
+/Data
+uv.lock
 .env
 .venv
 .DS_Store
+yolov10n.pt

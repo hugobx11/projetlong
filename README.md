@@ -10,11 +10,13 @@ Le module actuel implémente une **IA embarquée auto-adaptative** (basée sur Y
 
 # Architecture du dossier
 
+```text
 projetlong/
-├── pyproject.toml          # Dépendances et configuration du projet Python
-├── README.md               # Documentation principale du projet
-├── src/                    # Code source du module de détection
-│   ├── detect_video.py     # Script principal de détection sur flux vidéo / fichier
-│   └── detect_vid_v2.py    # Variante / version expérimentale du script de détection
-├── Data/                   # Vidéos de test et données d’entrée
-└── runs/                   # Résultats de détection générés (vidéos annotées, logs, etc.)
+├── pyproject.toml          → Dépendances et configuration du projet Python
+├── README.md               → Documentation principale du projet
+├── src/                    → Code source du module de détection
+│   ├── detect_video.py     → Script principal de détection sur flux vidéo / fichier
+│   └── detect_vid_v2.py    → Variante / version expérimentale du script de détection
+├── Data/                   → Vidéos de test et données d’entrée
+└── runs/                   → Résultats de détection générés (vidéos annotées, logs, etc.)
+```

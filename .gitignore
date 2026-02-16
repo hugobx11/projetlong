@@ -1,7 +1,31 @@
-/runs
-/Data
-uv.lock
+# --- Environnement & Configuration ---
+.venv/
 .env
-.venv
+uv.lock
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Distribution / Build (Généré par pip install -e .) ---
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# --- Système & IDE ---
 .DS_Store
-yolov10n.pt
+.vscode/
+.idea/
+
+# --- Projet RoadEye Guardian ---
+# Données volumineuses
+/Data
+
+# Résultats de détection (Vidéos, logs, images)
+/runs
+
+# Poids des modèles IA (Fichiers lourds)
+*.pt
+*.onnx

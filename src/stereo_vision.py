@@ -158,6 +158,8 @@ class StereoDepthEstimator:
             frame2_resized = cv2.resize(frame2, (w1, h1))
             vis = np.hstack((frame1, frame2_resized))
 
+            out.write(vis)
+
             cv2.imshow("Stereo View", vis)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break

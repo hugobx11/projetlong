@@ -64,8 +64,8 @@ class StereoDepthEstimator:
             # 1. Détection & Tracking (YOLO + ByteTrack)
             # On utilise le tracker pour lisser les detections, mais l'association
             # Stereo se fait frame par frame ici.
-            res1 = self.model.track(frame1, persist=True, verbose=False, tracker="bytetrack.yaml")
-            res2 = self.model.track(frame2, persist=True, verbose=False, tracker="bytetrack.yaml")
+            res1 = self.model.track(frame1, persist=True, verbose=False ,conf=0.05, tracker="bytetrack.yaml")
+            res2 = self.model.track(frame2, persist=True, verbose=False ,conf=0.05, tracker="bytetrack.yaml")
 
             # 2. Extraction des points d'intérêt (Centres bas des boites)
             points_cam1 = []
@@ -73,7 +73,8 @@ class StereoDepthEstimator:
             labels_cam1 = []
             
             # Récupération des boites Cam 1
-            if res1[0].boxes.id is not None:
+            #if res1[0].boxes.id is not None:
+            if res1[0].boxes is not None:
                 boxes1 = res1[0].boxes.xyxy.cpu().numpy()
                 clss1 = res1[0].boxes.cls.cpu().numpy()
                 for box, cls_id in zip(boxes1, clss1):
@@ -84,25 +85,36 @@ class StereoDepthEstimator:
                     cv2.rectangle(frame1, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
 
             # Récupération des boites Cam 2
-            if res2[0].boxes.id is not None:
+            #if res2[0].boxes.id is not None:
+            if res2[0].boxes is not None:
                 boxes2 = res2[0].boxes.xyxy.cpu().numpy()
                 for box in boxes2:
                     pt = self.get_center_point(box)
                     points_cam2.append(pt)
                     # Dessin Cam 2
                     cv2.rectangle(frame2, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 0, 255), 2)
+    
+
+            # Trier points_cam1 par ordre croissant du premier élément avec fonctions natives
+            indices_triés1 = np.argsort([pt[0, 0] for pt in points_cam1])
+            points_cam1 = [points_cam1[i] for i in indices_triés1]
+            labels_cam1 = [labels_cam1[i] for i in indices_triés1]
+            print(f"nb entités cam1: {len(points_cam1)}")
+
+            indices_triés2 = np.argsort([pt[0, 0] for pt in points_cam2])
+            points_cam2 = [points_cam2[i] for i in indices_triés2]
+            print(f"nb entités cam2: {len(points_cam2)}")
+
 
             # 3. Matching Naïf (Le plus grand défi en stéréovision)
             # Ici, on suppose qu'il n'y a qu'un seul objet principal ou on matche par ordre.
             # Pour un vrai projet : il faut matcher par Similarité Visuelle (ReID) ou contrainte épipolaire.
             
             min_len = min(len(points_cam1), len(points_cam2))
-            
             for i in range(min_len):
                 pt1 = points_cam1[i]
                 pt2 = points_cam2[i]
                 label = labels_cam1[i]
-
                 # 4. Triangulation
                 # Convertir en format accepté par opencv (2, N) float
                 pt1_f = pt1.astype(float)
@@ -123,6 +135,8 @@ class StereoDepthEstimator:
                 info_text = f"{label}: {distance:.2f}m (X:{X:.1f}, Z:{Z:.1f})"
                 cv2.putText(frame1, info_text, (int(pt1[0,0]), int(pt1[1,0])), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+                print(f"label: {label}{i}, distance: {distance}")
 
             # Concaténation pour affichage
             # Redimensionner pour coller côte à côte

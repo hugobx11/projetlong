@@ -44,12 +44,26 @@ class StereoDepthEstimator:
         x1, y1, x2, y2 = box
         return np.array([[(x1 + x2) / 2], [y2]]) # Shape (2, 1)
 
-    def process_videos(self, video1_path: Path, video2_path: Path):
+    def process_videos(self, video1_path: Path, video2_path: Path, output_path: Path):
         cap1 = cv2.VideoCapture(str(video1_path))
         cap2 = cv2.VideoCapture(str(video2_path))
 
         if not cap1.isOpened() or not cap2.isOpened():
             raise IOError("Impossible d'ouvrir l'une des vidéos.")
+
+        # --- CONFIGURATION DE L'ENREGISTREMENT ---
+        # On récupère les propriétés de la vidéo source
+        fps = cap1.get(cv2.CAP_PROP_FPS)
+        w = int(cap1.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap1.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # La largeur est multipliée par 2 car on affiche les vidéos côte à côte (hstack)
+        out_size = (w * 2, h)
+        
+        # Initialisation du writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(str(output_path), fourcc, fps, out_size)
+        print(f"Enregistrement commencé : {output_path}")
 
         # Création des fenêtres
         cv2.namedWindow("Stereo View", cv2.WINDOW_NORMAL)
@@ -150,14 +164,20 @@ class StereoDepthEstimator:
 
         cap1.release()
         cap2.release()
+        out.release()
         cv2.destroyAllWindows()
 
 def main():
     root = Path(__file__).resolve().parent.parent
     # Adaptez les noms de vos vidéos ici
-    video1 = root / "Data" / "Simulation statique 1" / "video_cam1_gauche.mp4" 
-    video2 = root / "Data" / "Simulation statique 1" / "video_cam2_droite.mp4"
+    video1 = root / "Data" / "CARLA" / "Simulation statique 1" / "video_cam1_gauche.mp4" 
+    video2 = root / "Data" / "CARLA" / "Simulation statique 1" / "video_cam2_droite.mp4"
     model_pt = root / "yolov10n.pt"
+
+    # Chemin de sortie
+    output_dir = root / "runs" / "stereo"
+    output_dir.mkdir(parents=True, exist_ok=True) # Crée le dossier s'il n'existe pas
+    output_path = output_dir / "stereo_result.mp4"
 
     # Exemple : Caméras écartées de 50cm (0.5m)
     estimator = StereoDepthEstimator(str(model_pt), baseline=0.5)
@@ -168,7 +188,7 @@ def main():
         print("Veuillez fournir deux vidéos : video_left.mp4 et video_right.mp4")
         return
 
-    estimator.process_videos(video1, video2)
+    estimator.process_videos(video1, video2, output_path)
 
 if __name__ == "__main__":
     main()

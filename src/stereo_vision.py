@@ -121,7 +121,7 @@ class StereoDepthEstimator:
 
                 # Affichage
                 info_text = f"{label}: {distance:.2f}m (X:{X:.1f}, Z:{Z:.1f})"
-                cv2.putText(frame1, info_text, (int(pt1[0]), int(pt1[1])), 
+                cv2.putText(frame1, info_text, (int(pt1[0,0]), int(pt1[1,0])), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
             # Concaténation pour affichage
@@ -141,8 +141,8 @@ class StereoDepthEstimator:
 def main():
     root = Path(__file__).resolve().parent.parent
     # Adaptez les noms de vos vidéos ici
-    video1 = root / "Data" / "video_left.mp4" 
-    video2 = root / "Data" / "video_right.mp4"
+    video1 = root / "Data" / "Simulation statique 1" / "video_cam1_gauche.mp4" 
+    video2 = root / "Data" / "Simulation statique 1" / "video_cam2_droite.mp4"
     model_pt = root / "yolov10n.pt"
 
     # Exemple : Caméras écartées de 50cm (0.5m)

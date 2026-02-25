@@ -13,17 +13,18 @@ Le module actuel implémente une **IA embarquée auto-adaptative** (basée sur Y
 
 ```text
 projetlong/
-├── pyproject.toml          → Dépendances et configuration du projet Python
-├── README.md               → Documentation principale du projet
-├── .gitignore              → Fichiers et dossiers ignorés par Git
-├── yolov10n.pt             → Modèle pré-entraîné YOLOv10n (poids du réseau de neurones)
-├── src/                    → Code source du module de détection
-│   ├── detect_video.py     → Script de détection basique sur vidéo avec YOLOv10
-│   ├── detect_vid_v2.py    → Script de détection avancée avec extraction de couleur dominante
-│   └── stereo_vision.py    → Module d'estimation de distance par stéréovision (2 caméras)
-├── Data/                   → Vidéos de test et données d'entrée (symlink vers Google Drive)
-└── runs/                   → Résultats de détection générés (vidéos annotées, logs, etc.)
-    └── detect/             → Dossier contenant les sorties de détection YOLO
+├── pyproject.toml              → Dépendances et configuration du projet Python
+├── README.md                   → Documentation principale du projet
+├── .gitignore                  → Fichiers et dossiers ignorés par Git
+├── yolov10n.pt                 → Modèle pré-entraîné YOLOv10n (poids du réseau de neurones)
+├── src/                        → Code source du module de détection
+│   ├── detect_video.py         → Script de détection basique sur vidéo avec YOLOv10
+│   ├── detect_vid_v2.py        → Script de détection avancée avec extraction de couleur dominante
+│   ├── stereo_vision.py        → Module d'estimation de distance par stéréovision (2 caméras)
+│   └── stereo_globaltrack.py   → Variante stéréo avec tracking global spatio-temporel (Kalman + Hongrois)
+├── Data/                       → Vidéos de test et données d'entrée (symlink vers Google Drive)
+└── runs/                       → Résultats de détection générés (vidéos annotées, logs, etc.)
+    └── detect/                 → Dossier contenant les sorties de détection YOLO
 ```
 
 ## Description détaillée des fichiers Python
@@ -158,3 +159,101 @@ python src/stereo_vision.py
 - Estimation de distance pour la prévention de collision
 - Calcul de vitesse relative des objets
 - Cartographie 3D de l'environnement routier
+
+---
+
+### `src/stereo_globaltrack.py`
+
+**Objectif** : Variante avancée de stéréovision qui remplace ByteTrack par un **tracker global spatio-temporel**.  
+Ce module fusionne les informations des deux caméras et du temps (plusieurs frames) pour maintenir des identifiants d’objets cohérents, même en cas d’occlusion ou de détections manquantes.
+
+**Principales briques logicielles** :
+- **`KalmanTrack`** :
+  - Représente une piste (un objet suivi dans le temps).
+  - Utilise un **filtre de Kalman 3D + 2D** avec 10 états :
+    - Position 3D \((X, Y, Z)\),
+    - Position d’image \((c_x, c_y)\),
+    - Vitesses correspondantes \((v_X, v_Y, v_Z, v_{cx}, v_{cy})\).
+  - L’état est corrigé à chaque nouvelle observation (mesures YOLO + triangulation), et prédit pendant les occlusions pour garder une trajectoire fluide.
+
+- **`GlobalTracker`** :
+  - Gère l’ensemble des pistes actives et leurs identifiants.
+  - **Association stéréo (entre caméras)** :
+    - Utilise l’algorithme de l’assignation Hongroise (`linear_sum_assignment`) sur une matrice de coût.
+    - Contraintes intégrées :
+      - Même classe d’objet à gauche et à droite.
+      - **Contrainte épipolaire simplifiée** : les coordonnées verticales doivent rester proches (lignes épipolaires approximées par des horizontales).
+      - Ordre horizontal cohérent (caméra 2 à droite → disparité correcte).
+      - Différence de taille limitée entre les bounding boxes gauche/droite.
+  - **Estimation 3D** :
+    - Utilise `cv2.triangulatePoints` et les matrices de projection \(P_1, P_2\) pour reconstruire les coordonnées \((X, Y, Z)\) à partir du centre bas des boîtes.
+  - **Association temporelle (entre frames)** :
+    - Tous les `KalmanTrack` prédisent leur prochain état.
+    - Une nouvelle matrice de coût compare la prédiction avec les nouvelles observations :
+      - Distance en pixels entre centres,
+      - Différence de profondeur \(Z\).
+    - Les observations non assignées créent de nouvelles pistes, celles non observées incrémentent `lost_frames` et sont supprimées après un seuil.
+
+- **`StereoDepthEstimator` (version globale)** :
+  - Charge YOLOv10n et configure une calibration simulée (matrice intrinsèque K, baseline, matrices de projection \(P_1, P_2\)).
+  - **`extract_detections`** :
+    - Convertit la sortie Ultralytics en dictionnaires plus simples (boîte, classe, confiance) en ne gardant que les classes pertinentes (`CLASS_MAPPING`).
+  - **`process_videos`** :
+    - Ouvre les deux vidéos (caméra gauche et droite).
+    - À chaque frame :
+      - Exécute la détection YOLO sur chaque vue (`predict`).
+      - Formate les détections, effectue l’association stéréo puis l’association temporelle via `GlobalTracker`.
+      - Dessine les boîtes et les labels sur chaque vue :
+        - ID global,
+        - Classe,
+        - Distance euclidienne depuis la caméra,
+        - Indication visuelle en cas d’occlusion (épaisseur de trait réduite + label adapté).
+    - Concatène les vues gauche/droite côte à côte et enregistre la vidéo de sortie dans `runs/stereo/stereo_globaltrack_result.mp4`.
+
+**Cas d’usage privilégiés** :
+- Scènes avec **occlusions fréquentes** (véhicules qui se masquent mutuellement).
+- Besoin d’**identifiants stables** pour des modules en aval (fusion de trajectoires, prédiction de trajectoire, coopération entre véhicules).
+- Analyse de scénarios CARLA (simulations) nécessitant une cohérence temporelle forte.
+
+---
+
+### Dépendances
+
+Le projet utilise les dépendances suivantes (définies dans `pyproject.toml`) :
+
+- **numpy** (>=2.4.2) : Calculs numériques et manipulation de tableaux.
+- **ultralytics** (>=8.4.0) : Framework YOLOv10 pour la détection d'objets (YOLOv10n).
+- **opencv-python** (>=4.10.0) : Traitement d'images et de vidéos, lecture/écriture de flux, affichage.
+- **lapx** (>=0.5.5) : Bibliothèque d'optimisation utilisée notamment par ByteTrack pour le tracking multi-objet.
+
+### Installation rapide
+
+Depuis la racine du projet :
+
+```bash
+# Création d'un environnement virtuel (optionnel mais recommandé)
+python -m venv .venv
+source .venv/bin/activate  # sous Windows : .venv\Scripts\activate
+
+# Installation des dépendances et du paquet en mode editable
+pip install -e .
+```
+
+Au premier lancement d'un des scripts, le modèle `yolov10n.pt` sera téléchargé automatiquement si le fichier n'est pas déjà présent à la racine.
+
+### Structure des données
+
+- **Entrée** :
+  - Vidéos MP4 dans le dossier `Data/`.
+  - Pour la stéréovision : `Data/video_left.mp4` et `Data/video_right.mp4` (caméras synchronisées).
+- **Sortie** :
+  - Vidéos annotées dans `runs/detect/` (par exemple `yolov10_video/` ou `res_detect_vid.mp4`).
+- **Modèle** :
+  - Fichier `yolov10n.pt` à la racine (poids du modèle YOLOv10n).
+
+### Notes techniques
+
+- Le projet cible Python **3.11+** (cf. `pyproject.toml`).
+- Le dossier `Data/` est un **lien symbolique** vers un répertoire Google Drive afin de gérer facilement des vidéos volumineuses.
+- Les répertoires `runs/`, `Data/` et les poids de modèles (`*.pt`) sont exclus du suivi Git via `.gitignore` pour éviter de versionner les données lourdes.
+- Les scripts sont pensés pour être intégrés dans un système embarqué ou semi-embarqué, avec une priorité donnée à la **latence faible** et à la **robustesse** des chemins d'accès (utilisation systématique de `pathlib.Path`).

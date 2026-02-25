@@ -337,6 +337,8 @@ class StereoDepthEstimator:
                 break
 
             # 1. Détection indépendante (Sans ByteTrack, on utilise predict)
+            # conf=0.3 : On ne garde que les détections dont l'IA est sûre à 30% minimum
+            # iou=0.4  : Si deux boîtes se chevauchent à plus de 40%, on supprime la moins probable
             res1 = self.model.predict(frame1, verbose=False, conf=0.3, iou=0.4)
             res2 = self.model.predict(frame2, verbose=False, conf=0.3, iou=0.4)
 

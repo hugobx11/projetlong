@@ -1,259 +1,313 @@
-# RoadEye Guardian 2026
+## RoadEye Guardian 2026
 
-## Description
-Ce projet s'inscrit dans le cadre du **Projet Long 2026 - RoadEye Guardian**. Il vise à développer une solution de perception coopérative embarquée pour la prévention proactive des accidents routiers.
+### Description
 
-Le module actuel implémente une **IA embarquée auto-adaptative** (basée sur YOLOv10n) capable de :
-1. Détecter les usagers de la route (Voitures, Bus, Cyclistes, Piétons).
-2. Qualifier les entités détectées (Extraction de la couleur dominante).
-3. Estimer les distances par stéréovision (2 caméras).
-4. Fonctionner avec une latence minimale.
+Ce projet s'inscrit dans le cadre du **Projet Long 2026 - RoadEye Guardian**.  
+Il vise à développer une solution de **perception coopérative embarquée** pour la prévention proactive des accidents routiers.
 
-## Architecture du dossier
+Le module actuel implémente une **chaîne de stéréovision + tracking global** basée sur YOLO (modèle léger) et un filtre de Kalman 3D, capable de :
+
+1. **Détecter** les usagers de la route pertinents (Piétons, Cyclistes, Voitures, Motos, Bus, Camions).
+2. **Estimer la distance 3D** des objets par triangulation stéréo (2 caméras).
+3. **Suivre les objets dans le temps** avec un tracker global spatio‑temporel robuste aux occlusions.
+4. **Visualiser la scène en vue de dessus** (plan \(X\)-\(Z\)) pour analyser les trajectoires.
+
+---
+
+### Architecture du dossier
 
 ```text
 projetlong/
-├── pyproject.toml              → Dépendances et configuration du projet Python
-├── README.md                   → Documentation principale du projet
-├── .gitignore                  → Fichiers et dossiers ignorés par Git
-├── yolov10n.pt                 → Modèle pré-entraîné YOLOv10n (poids du réseau de neurones)
-├── src/                        → Code source du module de détection
-│   ├── detect_video.py         → Script de détection basique sur vidéo avec YOLOv10
-│   ├── detect_vid_v2.py        → Script de détection avancée avec extraction de couleur dominante
-│   ├── stereo_vision.py        → Module d'estimation de distance par stéréovision (2 caméras)
-│   └── stereo_globaltrack.py   → Variante stéréo avec tracking global spatio-temporel (Kalman + Hongrois)
-├── Data/                       → Vidéos de test et données d'entrée (symlink vers Google Drive)
-└── runs/                       → Résultats de détection générés (vidéos annotées, logs, etc.)
-    └── detect/                 → Dossier contenant les sorties de détection YOLO
+├── pyproject.toml            → Dépendances et configuration du projet Python
+├── README.md                 → Documentation principale du projet
+├── .env                      → Variables d'environnement pour la stéréovision / tracking / vue top-down
+├── .gitignore                → Fichiers et dossiers ignorés par Git
+├── src/                      → Code source du module de stéréovision
+│   ├── stereo_globaltrack.py → Script principal : stéréovision + tracking global + vue top-down
+│   ├── tracker.py            → Implémentation du tracker global (Kalman + Hongrois)
+│   ├── topdown_view.py       → Visualisation en vue de dessus (Matplotlib, optionnel)
+│   ├── stereo_calibration.py → Gestion d'une calibration stéréo (chargement/rectification)
+│   └── calibrate_stereo.py   → Outil CLI pour estimer une calibration stéréo (.npz) à partir d'un damier
+├── Data/                     → Vidéos de test et données d'entrée
+│   └── Simulation_x/
+│       ├── gauche.mp4        → Vidéo caméra gauche
+│       └── droite.mp4        → Vidéo caméra droite
+└── runs/                     → Résultats générés (vidéos annotées, etc.)
+    └── stereo/
+        └── Simulation_x/
+            └── Simulation_x.mp4
 ```
 
-## Description détaillée des fichiers Python
-
-### `src/detect_video.py`
-
-**Objectif** : Script de détection d'entités basique utilisant YOLOv10 pour analyser une vidéo et générer une vidéo annotée avec un résumé des détections.
-
-**Fonctionnalités principales** :
-- **Chargement du modèle** : Utilise YOLOv10n (version nano, optimisée pour la vitesse) depuis un fichier local ou télécharge automatiquement le modèle depuis Ultralytics si absent
-- **Traitement vidéo** : Lit une vidéo depuis le dossier `Data/` et applique la détection d'objets frame par frame
-- **Catégorisation intelligente** : Regroupe les 80 classes COCO de YOLO en 4 méta-catégories :
-  - **Piéton** : `person`
-  - **Véhicule** : `car`, `motorcycle`, `train`, `boat`
-  - **Bus/Camion** : `bus`, `truck`
-  - **Cycliste** : `bicycle`
-- **Génération de statistiques** : Compte et affiche le nombre de détections par catégorie dans la console
-- **Sauvegarde** : Enregistre la vidéo annotée dans `runs/detect/yolov10_video/` avec les bounding boxes et labels
-
-**Paramètres de détection** :
-- Seuil de confiance : `0.05` (très bas pour détecter tous les objets, même peu visibles)
-- Format de sortie : Vidéo MP4 annotée avec les détections visuelles
-
-**Utilisation** :
-```bash
-python src/detect_video.py
-```
-
-**Fichiers requis** :
-- `Data/WhatsApp_Video_1.mp4` : Vidéo source à analyser
-- `yolov10n.pt` : Modèle YOLOv10n (téléchargé automatiquement si absent)
+> **Remarque** : dans la configuration par défaut, le nom de la simulation est piloté par la variable d'environnement `VIDEO_PATH` (par ex. `Simulation_1`, `Simulation_2`, …).
 
 ---
 
-### `src/detect_vid_v2.py`
-
-**Objectif** : Version améliorée du script de détection qui ajoute l'extraction de la couleur dominante pour chaque entité détectée, permettant une qualification plus précise des objets.
-
-**Fonctionnalités principales** :
-- **Détection YOLOv10** : Utilise YOLOv10n pour détecter les objets dans la vidéo
-- **Filtrage par classe** : Ne traite que les classes pertinentes pour la route (piétons, cyclistes, voitures, motos, bus, camions) définies dans `CLASS_MAPPING`
-- **Extraction de couleur dominante** : Fonction `get_dominant_color()` qui :
-  - Extrait la région d'intérêt (ROI) de chaque bounding box
-  - Se concentre sur le centre de l'objet (évite les bordures et ombres)
-  - Convertit l'image en espace colorimétrique HSV (plus robuste pour la détection de couleur)
-  - Analyse la saturation et la luminosité pour distinguer :
-    - **Couleurs achromatiques** : Noir, Blanc, Gris (basé sur la saturation < 40)
-    - **Couleurs chromatiques** : Rouge, Orange, Jaune, Vert, Bleu, Violet (basé sur la teinte HSV)
-  - Gère les cas limites (objets trop petits, zones vides)
-
-**Mapping des classes** :
-- `0` : Piéton
-- `1` : Cycliste
-- `2` : Voiture
-- `3` : Moto
-- `5` : Bus
-- `7` : Camion
-
-**Affichage visuel** :
-- Bounding boxes vertes autour des objets détectés
-- Labels combinant le type d'objet et sa couleur dominante (ex: "Voiture | Rouge")
-- Fond vert semi-transparent pour améliorer la lisibilité du texte
-
-**Paramètres de détection** :
-- Seuil de confiance : `0.4` (plus sélectif que la version basique)
-- Traitement frame par frame avec OpenCV pour un contrôle précis de la sortie vidéo
-
-**Utilisation** :
-```bash
-python src/detect_vid_v2.py
-```
-
-**Fichiers requis** :
-- `Data/onboard_driving_New_York.mp4` : Vidéo source à analyser
-- `yolov10n.pt` : Modèle YOLOv10n
-
-**Sortie** :
-- Vidéo annotée sauvegardée dans `runs/detect/res_detect_vid.mp4`
-
----
-
-### `src/stereo_vision.py`
-
-**Objectif** : Module d'estimation de distance par stéréovision utilisant deux caméras synchronisées pour calculer la profondeur 3D des objets détectés.
-
-**Fonctionnalités principales** :
-- **Classe `StereoDepthEstimator`** : Implémente l'estimation de distance stéréoscopique
-  - **Calibration des caméras** : Utilise des matrices de projection (P1, P2) pour modéliser la géométrie des deux caméras
-  - **Paramètres configurables** :
-    - `baseline` : Distance entre les deux caméras (par défaut 0.5 mètres)
-    - `focal_length` : Focale en pixels (par défaut 1200.0)
-  - **Matrices intrinsèques** : Calcule automatiquement la matrice K (paramètres internes de la caméra) basée sur la résolution supposée (1920x1080)
-
-- **Détection et tracking** :
-  - Utilise YOLOv10 pour la détection d'objets sur les deux flux vidéo
-  - Intègre ByteTrack pour le suivi temporel des objets (persistance entre les frames)
-  - Assure la cohérence des identifiants d'objets entre les frames
-
-- **Triangulation stéréoscopique** :
-  - Extrait le point central bas de chaque bounding box (point de contact au sol)
-  - Utilise `cv2.triangulatePoints()` pour calculer la position 3D (X, Y, Z) de chaque objet
-  - Calcule la distance euclidienne depuis la caméra de référence
-
-- **Matching stéréoscopique** :
-  - Algorithme de matching naïf (par ordre) pour associer les objets entre les deux vues
-  - **Note** : Pour une production, il faudrait implémenter un matching par similarité visuelle (ReID) ou contrainte épipolaire
-
-- **Affichage en temps réel** :
-  - Fenêtre combinée montrant les deux vues côte à côte
-  - Bounding boxes colorées (bleu pour caméra 1, rouge pour caméra 2)
-  - Overlay textuel affichant : type d'objet, distance en mètres, coordonnées X et Z
-
-**Limitations actuelles** :
-- Calibration simulée (nécessite une calibration réelle avec un échiquier)
-- Matching simpliste (nécessite amélioration pour scènes complexes)
-- Résolution fixe supposée (1920x1080)
-
-**Utilisation** :
-```bash
-python src/stereo_vision.py
-```
-
-**Fichiers requis** :
-- `Data/video_left.mp4` : Vidéo de la caméra gauche
-- `Data/video_right.mp4` : Vidéo de la caméra droite
-- `yolov10n.pt` : Modèle YOLOv10n
-
-**Contrôles** :
-- Appuyer sur `q` pour quitter l'application
-
-**Applications** :
-- Estimation de distance pour la prévention de collision
-- Calcul de vitesse relative des objets
-- Cartographie 3D de l'environnement routier
-
----
+### Description détaillée des fichiers Python
 
 ### `src/stereo_globaltrack.py`
 
-**Objectif** : Variante avancée de stéréovision qui remplace ByteTrack par un **tracker global spatio-temporel**.  
-Ce module fusionne les informations des deux caméras et du temps (plusieurs frames) pour maintenir des identifiants d’objets cohérents, même en cas d’occlusion ou de détections manquantes.
+**Objectif** : script principal de **stéréovision spatio‑temporelle**.  
+Il lit deux flux vidéo (gauche/droite), lance la détection YOLO, associe les détections entre caméras et entre frames, estime la position 3D de chaque objet, et produit une vidéo annotée (et éventuellement une vue de dessus temps réel).
 
-**Principales briques logicielles** :
+**Fonctionnalités principales** :
+- **Chargement du modèle YOLO** :
+  - Chemin par défaut : variable d'environnement `MODEL_PATH` (sinon `yolov10n.pt` à la racine du projet).
+- **Utilisation de la calibration stéréo** :
+  - Si un fichier `.npz` de calibration est fourni (option `--calibration`), il est chargé via `StereoCalibration` et utilisé pour rectifier les images et trianguler en 3D.
+  - Sinon, une calibration « simplifiée » est générée à partir de la focale et de la baseline par défaut.
+- **Détection d’objets** :
+  - Utilise YOLO pour détecter les objets sur chaque vue.
+  - Seules les classes pertinentes pour la route sont conservées (`CLASS_MAPPING`).
+  - Les seuils de confiance et d’IoU sont configurables via `.env`.
+- **Triangulation 3D + tracking** :
+  - Associe les détections gauche/droite via `GlobalTracker.associate_stereo(...)`.
+  - Triangulation des points 3D \((X,Y,Z)\) à partir des centres bas des boîtes.
+  - Mise à jour du tracker global pour obtenir des identifiants stables dans le temps.
+- **Affichage et sortie vidéo** :
+  - Dessine pour chaque piste :
+    - **ID global**,
+    - **classe** (Piéton, Cycliste, Voiture, …),
+    - **distance euclidienne** à la caméra,
+    - indication d’**occlusion** (épaisseur de trait réduite et label adapté).
+  - Concatène les vues gauche/droite côte à côte et enregistre la vidéo de sortie (`.mp4`).
+  - Ouvre une fenêtre OpenCV `Stereo View` et, si activé, une fenêtre Matplotlib de vue de dessus.
+
+**Arguments principaux** (ligne de commande) :
+- `--video-left` : chemin de la vidéo caméra gauche (par défaut `Data/<VIDEO_PATH>/gauche.mp4`).
+- `--video-right` : chemin de la vidéo caméra droite (par défaut `Data/<VIDEO_PATH>/droite.mp4`).
+- `--model` : chemin des poids YOLO (par défaut `MODEL_PATH` ou `yolov10n.pt`).
+- `--output` : chemin de la vidéo de sortie (par défaut `runs/stereo/<VIDEO_PATH>/<VIDEO_PATH>.mp4` ou `OUTPUT_VIDEO_PATH` si défini).
+- `--baseline` : baseline stéréo en mètres (par défaut `STEREO_BASELINE`).
+- `--calibration` : fichier `.npz` de calibration stéréo (cf. `calibrate_stereo.py`).
+- `--no-rectify` : désactive la rectification/undistortion des images.
+- `--no-topdown` : désactive la vue de dessus (Matplotlib).
+- `--max-lost-frames` : nombre maximal de frames d’occlusion avant suppression d’une piste.
+
+**Utilisation de base** :
+
+```bash
+# Depuis la racine du projet (chemins par défaut depuis .env)
+python src/stereo_globaltrack.py
+```
+
+**Exemples avancés** :
+
+```bash
+# Forcer une simulation spécifique sans modifier .env
+VIDEO_PATH=Simulation_3 python src/stereo_globaltrack.py
+
+# Spécifier explicitement les chemins et la calibration
+python src/stereo_globaltrack.py \
+  --video-left Data/Simulation_3/gauche.mp4 \
+  --video-right Data/Simulation_3/droite.mp4 \
+  --model yolov10n.pt \
+  --calibration Data/calibration/stereo_cam.npz \
+  --output runs/stereo/Simulation_3/Simulation_3.mp4
+```
+
+---
+
+### `src/tracker.py`
+
+**Objectif** : implémentation du **tracker global spatio‑temporel** utilisé par `stereo_globaltrack.py`.
+
+**Principales classes** :
 - **`KalmanTrack`** :
-  - Représente une piste (un objet suivi dans le temps).
-  - Utilise un **filtre de Kalman 3D + 2D** avec 10 états :
-    - Position 3D \((X, Y, Z)\),
-    - Position d’image \((c_x, c_y)\),
-    - Vitesses correspondantes \((v_X, v_Y, v_Z, v_{cx}, v_{cy})\).
-  - L’état est corrigé à chaque nouvelle observation (mesures YOLO + triangulation), et prédit pendant les occlusions pour garder une trajectoire fluide.
+  - Représente un objet suivi dans le temps (piste).
+  - Modélise un état de dimension 10 :
+    - Position 3D : \((X, Y, Z)\),
+    - Position image : \((c_x, c_y)\),
+    - Vitesses associées : \((v_X, v_Y, v_Z, v_{cx}, v_{cy})\).
+  - Utilise un **filtre de Kalman** (OpenCV) pour lisser les trajectoires et extrapoler pendant les occlusions.
+  - Maintient des bounding boxes gauche/droite cohérentes avec la prédiction.
 
 - **`GlobalTracker`** :
-  - Gère l’ensemble des pistes actives et leurs identifiants.
-  - **Association stéréo (entre caméras)** :
-    - Utilise l’algorithme de l’assignation Hongroise (`linear_sum_assignment`) sur une matrice de coût.
-    - Contraintes intégrées :
-      - Même classe d’objet à gauche et à droite.
-      - **Contrainte épipolaire simplifiée** : les coordonnées verticales doivent rester proches (lignes épipolaires approximées par des horizontales).
-      - Ordre horizontal cohérent (caméra 2 à droite → disparité correcte).
-      - Différence de taille limitée entre les bounding boxes gauche/droite.
-  - **Estimation 3D** :
-    - Utilise `cv2.triangulatePoints` et les matrices de projection \(P_1, P_2\) pour reconstruire les coordonnées \((X, Y, Z)\) à partir du centre bas des boîtes.
+  - Gère l’ensemble des pistes actives (`tracks`) et l’attribution de nouveaux IDs.
+  - **Association stéréo (gauche/droite)** :
+    - Basée sur l’algorithme hongrois (`scipy.optimize.linear_sum_assignment`).
+    - Contraintes :
+      - même classe d’objet,
+      - cohérence géométrique (disparité correcte, tailles compatibles),
+      - écart vertical et de taille limités (`MAX_Y_DIFF`, `MAX_SIZE_DIFF`).
+  - **Triangulation 3D** :
+    - Utilise les matrices de projection \(P_1, P_2\) pour reconstruire les points 3D.
   - **Association temporelle (entre frames)** :
-    - Tous les `KalmanTrack` prédisent leur prochain état.
-    - Une nouvelle matrice de coût compare la prédiction avec les nouvelles observations :
-      - Distance en pixels entre centres,
-      - Différence de profondeur \(Z\).
-    - Les observations non assignées créent de nouvelles pistes, celles non observées incrémentent `lost_frames` et sont supprimées après un seuil.
+    - Prédit les états de toutes les pistes.
+    - Construit une matrice de coût entre prédictions et nouvelles observations :
+      - distance en pixels entre centres,
+      - différence en profondeur \(Z\),
+      - seuils pilotés par `MAX_PIXEL_DIST` et `MAX_DEPTH_DIST`.
+    - Met à jour les pistes existantes ou crée de nouvelles pistes si nécessaire.
+    - Supprime les pistes dont `lost_frames` dépasse `MAX_LOST_FRAMES`.
 
-- **`StereoDepthEstimator` (version globale)** :
-  - Charge YOLOv10n et configure une calibration simulée (matrice intrinsèque K, baseline, matrices de projection \(P_1, P_2\)).
-  - **`extract_detections`** :
-    - Convertit la sortie Ultralytics en dictionnaires plus simples (boîte, classe, confiance) en ne gardant que les classes pertinentes (`CLASS_MAPPING`).
-  - **`process_videos`** :
-    - Ouvre les deux vidéos (caméra gauche et droite).
-    - À chaque frame :
-      - Exécute la détection YOLO sur chaque vue (`predict`).
-      - Formate les détections, effectue l’association stéréo puis l’association temporelle via `GlobalTracker`.
-      - Dessine les boîtes et les labels sur chaque vue :
-        - ID global,
-        - Classe,
-        - Distance euclidienne depuis la caméra,
-        - Indication visuelle en cas d’occlusion (épaisseur de trait réduite + label adapté).
-    - Concatène les vues gauche/droite côte à côte et enregistre la vidéo de sortie dans `runs/stereo/stereo_globaltrack_result.mp4`.
+Les principaux hyper‑paramètres du tracker sont configurables dans `.env` (voir section dédiée ci‑dessous).
 
-**Cas d’usage privilégiés** :
-- Scènes avec **occlusions fréquentes** (véhicules qui se masquent mutuellement).
-- Besoin d’**identifiants stables** pour des modules en aval (fusion de trajectoires, prédiction de trajectoire, coopération entre véhicules).
-- Analyse de scénarios CARLA (simulations) nécessitant une cohérence temporelle forte.
+---
+
+### `src/topdown_view.py`
+
+**Objectif** : afficher une **vue de dessus (plan \(X-Z\))** des objets suivis.
+
+**Caractéristiques** :
+- Utilise Matplotlib en mode interactif pour afficher les coordonnées projetées \((X,Z)\) des objets suivis.
+- Affiche un point coloré par piste + un label texte avec l’ID global.
+- Les limites des axes sont configurables via les variables d’environnement :
+  - `TOPDOWN_X_MIN`, `TOPDOWN_X_MAX`,
+  - `TOPDOWN_Z_MIN`, `TOPDOWN_Z_MAX`.
+- Si Matplotlib n’est pas disponible, la vue de dessus est automatiquement désactivée sans bloquer le pipeline.
+
+---
+
+### `src/stereo_calibration.py`
+
+**Objectif** : encapsuler les paramètres de **calibration stéréo** et fournir des outils pour la rectification.
+
+**Classe principale** :
+- **`StereoCalibration`** (dataclass immuable) :
+  - Contient :
+    - Intrinsèques + distorsion : `K1`, `D1`, `K2`, `D2`,
+    - Extrinsèques : `R`, `T`,
+    - Taille d’image : `image_size = (w, h)`,
+    - Paramètres de rectification optionnels : `R1`, `R2`, `P1`, `P2`, `Q`.
+  - `load_npz(path)` :
+    - Charge un fichier `.npz` contenant au minimum `K1`, `D1`, `K2`, `D2`, `R`, `T`, `image_size`.
+  - `with_rectification(alpha)` :
+    - Calcule (si nécessaire) `R1`, `R2`, `P1`, `P2`, `Q` via `cv2.stereoRectify`.
+    - Le paramètre `alpha` (par défaut `RECTIFICATION_ALPHA`) contrôle le recadrage (0 = recadrage fort).
+  - `build_rectification_maps()` :
+    - Retourne les cartes pour `cv2.remap` : `(map1x, map1y, map2x, map2y)` utilisées dans `stereo_globaltrack.py`.
+
+---
+
+### `src/calibrate_stereo.py`
+
+**Objectif** : outil en ligne de commande pour **estimer une calibration stéréo** à partir d’images de damier (chessboard) pour les caméras gauche/droite.
+
+**Fonctionnement** :
+- Parcourt deux dossiers d’images :
+  - `--left-dir`  : images de la caméra gauche,
+  - `--right-dir` : images de la caméra droite.
+- Cherche automatiquement un motif de damier de taille :
+  - `--cols` : nombre de coins intérieurs (colonnes),
+  - `--rows` : nombre de coins intérieurs (lignes).
+- Utilise `square_size_m` pour exprimer la taille réelle d’une case en mètres.
+- Calibre d’abord chaque caméra individuellement, puis effectue la **calibration stéréo** complète.
+- Calcule ensuite les matrices de rectification et de reprojection (`R1`, `R2`, `P1`, `P2`, `Q`).
+- Sauvegarde tous les résultats dans un fichier `.npz` exploitable par `StereoCalibration`.
+
+**Utilisation** :
+
+```bash
+python src/calibrate_stereo.py \
+  --left-dir Data/calib/gauche \
+  --right-dir Data/calib/droite \
+  --cols 9 \
+  --rows 6 \
+  --square-size-m 0.025 \
+  --out Data/calibration/stereo_cam.npz
+```
 
 ---
 
 ### Dépendances
 
-Le projet utilise les dépendances suivantes (définies dans `pyproject.toml`) :
+Les dépendances principales (déclarées dans `pyproject.toml`) sont :
 
-- **numpy** (>=2.4.2) : Calculs numériques et manipulation de tableaux.
-- **ultralytics** (>=8.4.0) : Framework YOLOv10 pour la détection d'objets (YOLOv10n).
-- **opencv-python** (>=4.10.0) : Traitement d'images et de vidéos, lecture/écriture de flux, affichage.
-- **lapx** (>=0.5.5) : Bibliothèque d'optimisation utilisée notamment par ByteTrack pour le tracking multi-objet.
+- **numpy** (>=2.4.2) : calculs numériques et manipulation de tableaux.
+- **ultralytics** (>=8.4.0) : framework YOLO pour la détection d'objets.
+- **opencv-python** (>=4.10.0) : traitement d'images et de vidéos, lecture/écriture, affichage.
+- **lapx** (>=0.5.5) : utilisé par certains trackers multi‑objets.
+- **scipy** (>=1.11.0) : algorithme hongrois (`linear_sum_assignment`) pour l’association optimale.
+
+Dépendances complémentaires recommandées :
+
+- **python-dotenv** : chargement des variables d’environnement depuis `.env`.
+- **matplotlib** : nécessaire pour activer la vue de dessus (`TopDownView`).
+
+---
 
 ### Installation rapide
 
 Depuis la racine du projet :
 
 ```bash
-# Création d'un environnement virtuel (optionnel mais recommandé)
+# (Optionnel mais recommandé) : créer un environnement virtuel
 python -m venv .venv
-source .venv/bin/activate  # sous Windows : .venv\Scripts\activate
+source .venv/bin/activate  # Sous Windows : .venv\Scripts\activate
 
 # Installation des dépendances et du paquet en mode editable
 pip install -e .
+
+# Installer également les dépendances complémentaires si besoin
+pip install python-dotenv matplotlib
 ```
 
-Au premier lancement d'un des scripts, le modèle `yolov10n.pt` sera téléchargé automatiquement si le fichier n'est pas déjà présent à la racine.
+Au premier lancement de `stereo_globaltrack.py`, le modèle YOLO défini par `MODEL_PATH`
+sera utilisé (ou téléchargé automatiquement par Ultralytics s’il s’agit d’un modèle connu).
+
+---
 
 ### Structure des données
 
 - **Entrée** :
-  - Vidéos MP4 dans le dossier `Data/`.
-  - Pour la stéréovision : `Data/video_left.mp4` et `Data/video_right.mp4` (caméras synchronisées).
+  - Dossiers de simulation dans `Data/` :
+    - `Data/Simulation_1/gauche.mp4`
+    - `Data/Simulation_1/droite.mp4`
+    - `Data/Simulation_2/...`, etc.
 - **Sortie** :
-  - Vidéos annotées dans `runs/detect/` (par exemple `yolov10_video/` ou `res_detect_vid.mp4`).
-- **Modèle** :
-  - Fichier `yolov10n.pt` à la racine (poids du modèle YOLOv10n).
+  - Vidéos annotées dans `runs/stereo/<Simulation>/` :
+    - `runs/stereo/Simulation_1/Simulation_1.mp4`
+  - Chemin personnalisable via `OUTPUT_VIDEO_PATH` ou l’argument `--output`.
+- **Calibration** :
+  - Fichiers `.npz` générés par `calibrate_stereo.py`, par exemple :
+    - `Data/calibration/stereo_cam.npz`
+
+---
+
+### Variables d'environnement (`.env`)
+
+Le fichier `.env` permet de régler finement le comportement du système sans modifier le code.
+Les variables ci‑dessous sont lues au chargement des modules.
+
+### Tracker (`tracker.py`)
+
+- **KALMAN_PROCESS_NOISE** : bruit de processus du filtre de Kalman.
+- **KALMAN_MEASUREMENT_NOISE** : bruit de mesure du filtre de Kalman.
+- **MAX_LOST_FRAMES** : nombre max de frames consécutives sans observation avant de supprimer une piste.
+- **MAX_Y_DIFF** : tolérance verticale (en pixels) pour associer les boîtes gauche/droite.
+- **MAX_SIZE_DIFF** : tolérance de différence de taille (hauteur + largeur) entre boîtes gauche/droite.
+- **MAX_TEMP_COST** : coût maximal pour considérer une association temporelle valide.
+- **MAX_PIXEL_DIST** : distance maximale en pixels pour l’association temporelle.
+- **MAX_DEPTH_DIST** : différence maximale de profondeur \(Z\) pour l’association temporelle.
+
+### Vue de dessus (`topdown_view.py`)
+
+- **TOPDOWN_X_MIN**, **TOPDOWN_X_MAX** : bornes de l’axe \(X\) (gauche/droite).
+- **TOPDOWN_Z_MIN**, **TOPDOWN_Z_MAX** : bornes de l’axe \(Z\) (distance en avant du véhicule).
+
+### Calibration stéréo (`stereo_calibration.py`)
+
+- **RECTIFICATION_ALPHA** : paramètre de recadrage pour `cv2.stereoRectify` (0.0 = recadrage fort).
+
+### Stéréovision globale (`stereo_globaltrack.py`)
+
+- **STEREO_BASELINE** : distance entre les deux caméras (mètres), utilisée pour la calibration simplifiée.
+- **STEREO_FOCAL_LENGTH** : focale en pixels (calibration simplifiée).
+- **DETECTION_CONF** : seuil de confiance YOLO.
+- **DETECTION_IOU** : seuil d’IoU pour la suppression des boxes.
+- **FALLBACK_FPS** : FPS utilisé si la vidéo ne fournit pas d’information fiable.
+- **FALLBACK_WIDTH**, **FALLBACK_HEIGHT** : résolution supposée lors de la calibration simplifiée.
+- **COLORS_COUNT** : nombre de couleurs aléatoires pré‑générées pour les pistes.
+- **VIDEO_PATH** : nom du sous‑dossier dans `Data/` contenant `gauche.mp4` et `droite.mp4`.
+- **MODEL_PATH** : chemin du fichier de poids YOLO (ex. `yolov10n.pt`, `yolo26n.pt`, …).
+- **OUTPUT_VIDEO_PATH** : chemin de sortie vidéo forcé (si vide, le chemin par défaut est utilisé).
+
+---
 
 ### Notes techniques
 
 - Le projet cible Python **3.11+** (cf. `pyproject.toml`).
-- Le dossier `Data/` est un **lien symbolique** vers un répertoire Google Drive afin de gérer facilement des vidéos volumineuses.
-- Les répertoires `runs/`, `Data/` et les poids de modèles (`*.pt`) sont exclus du suivi Git via `.gitignore` pour éviter de versionner les données lourdes.
-- Les scripts sont pensés pour être intégrés dans un système embarqué ou semi-embarqué, avec une priorité donnée à la **latence faible** et à la **robustesse** des chemins d'accès (utilisation systématique de `pathlib.Path`).
+- Le dossier `Data/` peut pointer vers un stockage externe (Google Drive, disque réseau, …) pour gérer des vidéos volumineuses.
+- Les répertoires `runs/`, `Data/` et les poids de modèles (`*.pt`) sont exclus du suivi Git via `.gitignore`.
+- Les scripts sont pensés pour une intégration dans un système embarqué ou semi‑embarqué, avec une priorité donnée à la **latence faible** et à la **robustesse** des chemins d'accès (utilisation de `pathlib.Path`).
+

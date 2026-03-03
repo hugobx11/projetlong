@@ -10,6 +10,8 @@ et vue de dessus (X-Z) optionnelle.
 from __future__ import annotations
 
 import argparse
+import os
+from dotenv import load_dotenv
 from pathlib import Path
 
 import cv2
@@ -19,6 +21,21 @@ from ultralytics import YOLO
 from tracker import GlobalTracker
 from topdown_view import TopDownView
 from stereo_calibration import StereoCalibration
+
+load_dotenv()
+
+STEREO_BASELINE_DEFAULT = float(os.getenv("STEREO_BASELINE", "0.5"))
+STEREO_FOCAL_LENGTH_DEFAULT = float(os.getenv("STEREO_FOCAL_LENGTH", "1200.0"))
+MAX_LOST_FRAMES_DEFAULT = int(os.getenv("MAX_LOST_FRAMES", "5"))
+
+DETECTION_CONF = float(os.getenv("DETECTION_CONF", "0.3"))
+DETECTION_IOU = float(os.getenv("DETECTION_IOU", "0.4"))
+
+FALLBACK_FPS = float(os.getenv("FALLBACK_FPS", "25.0"))
+FALLBACK_WIDTH = int(os.getenv("FALLBACK_WIDTH", "1920"))
+FALLBACK_HEIGHT = int(os.getenv("FALLBACK_HEIGHT", "1080"))
+
+COLORS_COUNT = int(os.getenv("COLORS_COUNT", "1000"))
 
 CLASS_MAPPING = {
     0: "Pieton",
@@ -34,9 +51,9 @@ class StereoDepthEstimator:
     def __init__(
         self,
         model_path: str,
-        baseline: float = 0.5,
-        focal_length: float = 1200.0,
-        max_lost_frames: int = 5,
+        baseline: float = STEREO_BASELINE_DEFAULT,
+        focal_length: float = STEREO_FOCAL_LENGTH_DEFAULT,
+        max_lost_frames: int = MAX_LOST_FRAMES_DEFAULT,
         calibration_path: Path | None = None,
         rectify: bool = True,
     ):
@@ -60,7 +77,7 @@ class StereoDepthEstimator:
                 self.P2 = calib.P2
         else:
             # Fallback "simplifié" si pas de calibration fournie
-            W, H = 1920, 1080
+            W, H = FALLBACK_WIDTH, FALLBACK_HEIGHT
             self.K = np.array(
                 [
                     [focal_length, 0, W / 2],
@@ -104,7 +121,7 @@ class StereoDepthEstimator:
         if not cap1.isOpened() or not cap2.isOpened():
             raise IOError("Impossible d'ouvrir l'une des vidéos.")
 
-        fps = cap1.get(cv2.CAP_PROP_FPS) or 25.0
+        fps = cap1.get(cv2.CAP_PROP_FPS) or FALLBACK_FPS
         w = int(cap1.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap1.get(cv2.CAP_PROP_FRAME_HEIGHT))
         out_size = (w * 2, h)
@@ -115,7 +132,7 @@ class StereoDepthEstimator:
 
         cv2.namedWindow("Stereo View", cv2.WINDOW_NORMAL)
 
-        colors = np.random.randint(0, 255, size=(1000, 3), dtype=int)
+        colors = np.random.randint(0, 255, size=(COLORS_COUNT, 3), dtype=int)
 
         topdown = TopDownView() if show_topdown else None
 
@@ -132,8 +149,12 @@ class StereoDepthEstimator:
                 frame1 = cv2.remap(frame1, map1x, map1y, interpolation=cv2.INTER_LINEAR)
                 frame2 = cv2.remap(frame2, map2x, map2y, interpolation=cv2.INTER_LINEAR)
 
-            res1 = self.model.predict(frame1, verbose=False, conf=0.3, iou=0.4)
-            res2 = self.model.predict(frame2, verbose=False, conf=0.3, iou=0.4)
+            res1 = self.model.predict(
+                frame1, verbose=False, conf=DETECTION_CONF, iou=DETECTION_IOU
+            )
+            res2 = self.model.predict(
+                frame2, verbose=False, conf=DETECTION_CONF, iou=DETECTION_IOU
+            )
 
             dets_left = self.extract_detections(res1)
             dets_right = self.extract_detections(res2)
@@ -216,37 +237,52 @@ class StereoDepthEstimator:
 def parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
 
+    # Nom de la simulation issu de VIDEO_PATH (dossier dans Data)
+    # On strip pour supprimer les espaces accidentels et on retombe
+    # sur "Simulation_1" si la valeur est vide.
+    simulation_name_env = os.getenv("VIDEO_PATH", "Simulation_1")
+    simulation_name = simulation_name_env.strip() or "Simulation_1"
+
+    # Chemin de sortie vidéo :
+    # - si OUTPUT_VIDEO_PATH est défini et non vide, on l'utilise tel quel,
+    # - sinon on crée un chemin par défaut sous runs/stereo/<simulation_name>/<simulation_name>.mp4
+    output_env = os.getenv("OUTPUT_VIDEO_PATH", "").strip()
+    if output_env:
+        default_output = Path(output_env)
+    else:
+        default_output = root / "runs" / "stereo" / simulation_name / f"{simulation_name}.mp4"
+
     parser = argparse.ArgumentParser(
         description="Stéréovision spatio-temporelle avec YOLO + GlobalTracker"
     )
     parser.add_argument(
         "--video-left",
         type=Path,
-        default=root / "Data" / "Simulation statique 1" / "video_cam1_gauche.mp4",
+        default=root / "Data" / simulation_name / "gauche.mp4",
         help="Vidéo caméra gauche",
     )
     parser.add_argument(
         "--video-right",
         type=Path,
-        default=root / "Data" / "Simulation statique 1" / "video_cam2_droite.mp4",
+        default=root / "Data" / simulation_name / "droite.mp4",
         help="Vidéo caméra droite",
     )
     parser.add_argument(
         "--model",
         type=Path,
-        default=root / "yolov10n.pt",
+        default=Path(os.getenv("MODEL_PATH", str(root / "yolov10n.pt"))),
         help="Poids YOLO",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=root / "runs" / "stereo" / "stereo_globaltrack_result.mp4",
+        default=default_output,
         help="Vidéo de sortie annotée",
     )
     parser.add_argument(
         "--baseline",
         type=float,
-        default=0.5,
+        default=STEREO_BASELINE_DEFAULT,
         help="Baseline stéréo (mètres)",
     )
     parser.add_argument(
@@ -268,7 +304,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-lost-frames",
         type=int,
-        default=5,
+        default=MAX_LOST_FRAMES_DEFAULT,
         help="Nombre max de frames d'occlusion avant suppression d'une piste",
     )
     return parser.parse_args()

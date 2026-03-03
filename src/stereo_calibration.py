@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
+
+RECTIFICATION_ALPHA = float(os.getenv("RECTIFICATION_ALPHA", "0.0"))
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,7 @@ class StereoCalibration:
         )
         return calib
 
-    def with_rectification(self, alpha: float = 0.0) -> "StereoCalibration":
+    def with_rectification(self, alpha: float = RECTIFICATION_ALPHA) -> "StereoCalibration":
         """
         Calcule R1,R2,P1,P2,Q via stereoRectify si non présents.
         """

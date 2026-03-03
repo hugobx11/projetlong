@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Optional
 
 import numpy as np
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TOPDOWN_X_MIN = float(os.getenv("TOPDOWN_X_MIN", "-7.0"))
+TOPDOWN_X_MAX = float(os.getenv("TOPDOWN_X_MAX", "4.0"))
+TOPDOWN_Z_MIN = float(os.getenv("TOPDOWN_Z_MIN", "0.0"))
+TOPDOWN_Z_MAX = float(os.getenv("TOPDOWN_Z_MAX", "16.0"))
 
 try:
     import matplotlib.pyplot as plt
@@ -23,8 +33,8 @@ class TopDownView:
     scatter: Optional["plt.Collection"] = field(init=False, default=None)
     texts: Dict[int, "plt.Text"] = field(init=False, default_factory=dict)
 
-    x_limits: Optional[tuple[float, float]] = (-7.0, 4.0)
-    z_limits: Optional[tuple[float, float]] = (0.0, 16.0)
+    x_limits: Optional[tuple[float, float]] = (TOPDOWN_X_MIN, TOPDOWN_X_MAX)
+    z_limits: Optional[tuple[float, float]] = (TOPDOWN_Z_MIN, TOPDOWN_Z_MAX)
 
     def __post_init__(self) -> None:
         if plt is None:

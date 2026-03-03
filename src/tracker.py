@@ -1,6 +1,23 @@
+import os
+from dotenv import load_dotenv
 import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+
+
+load_dotenv()
+
+KALMAN_PROCESS_NOISE = float(os.getenv("KALMAN_PROCESS_NOISE", "0.05"))
+KALMAN_MEASUREMENT_NOISE = float(os.getenv("KALMAN_MEASUREMENT_NOISE", "0.5"))
+
+MAX_LOST_FRAMES = int(os.getenv("MAX_LOST_FRAMES", "5"))
+
+MAX_Y_DIFF = float(os.getenv("MAX_Y_DIFF", "30"))
+MAX_SIZE_DIFF = float(os.getenv("MAX_SIZE_DIFF", "50"))
+
+MAX_TEMP_COST = float(os.getenv("MAX_TEMP_COST", "1000"))
+MAX_PIXEL_DIST = float(os.getenv("MAX_PIXEL_DIST", "200"))
+MAX_DEPTH_DIST = float(os.getenv("MAX_DEPTH_DIST", "15"))
 
 
 class KalmanTrack:
@@ -34,8 +51,10 @@ class KalmanTrack:
         for i in range(5):
             self.kf.measurementMatrix[i, i] = 1.0
 
-        self.kf.processNoiseCov = np.eye(10, dtype=np.float32) * 0.05
-        self.kf.measurementNoiseCov = np.eye(5, dtype=np.float32) * 0.5
+        self.kf.processNoiseCov = np.eye(10, dtype=np.float32) * KALMAN_PROCESS_NOISE
+        self.kf.measurementNoiseCov = (
+            np.eye(5, dtype=np.float32) * KALMAN_MEASUREMENT_NOISE
+        )
         self.kf.errorCovPost = np.eye(10, dtype=np.float32)
 
         state = np.array(
@@ -107,7 +126,9 @@ class GlobalTracker:
     Gère l'ensemble des pistes globales (multi-objets, multi-caméras, multi-frames).
     """
 
-    def __init__(self, P1: np.ndarray, P2: np.ndarray, max_lost_frames: int = 5):
+    def __init__(
+        self, P1: np.ndarray, P2: np.ndarray, max_lost_frames: int = MAX_LOST_FRAMES
+    ):
         self.P1 = P1
         self.P2 = P2
         self.tracks: dict[int, KalmanTrack] = {}
@@ -118,8 +139,8 @@ class GlobalTracker:
         self,
         dets_left: list[dict],
         dets_right: list[dict],
-        max_y_diff: float = 30,
-        max_size_diff: float = 50,
+        max_y_diff: float = MAX_Y_DIFF,
+        max_size_diff: float = MAX_SIZE_DIFF,
     ) -> list[tuple[dict, dict]]:
         if len(dets_left) == 0 or len(dets_right) == 0:
             return []
@@ -197,7 +218,7 @@ class GlobalTracker:
         track_ids = list(self.tracks.keys())
         predicted_states = {tid: self.tracks[tid].predict() for tid in track_ids}
 
-        max_temp_cost = 1000.0
+        max_temp_cost = MAX_TEMP_COST
         cost_matrix = np.full(
             (len(track_ids), len(current_frame_observations)), max_temp_cost
         )
@@ -214,7 +235,7 @@ class GlobalTracker:
                 )
                 dist_z = abs(pred["Z"] - obs["Z"])
 
-                if dist_pixel < 200.0 and dist_z < 15.0:
+                if dist_pixel < MAX_PIXEL_DIST and dist_z < MAX_DEPTH_DIST:
                     cost_matrix[i, j] = dist_pixel
 
         row_ind, col_ind = linear_sum_assignment(cost_matrix)

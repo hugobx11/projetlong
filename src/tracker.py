@@ -120,6 +120,35 @@ class KalmanTrack:
             [obs["X"], obs["Y"], obs["Z"]], dtype=float
         )
 
+    def update_v2x(self, v2x_obs: dict) -> None:
+        """
+        Met à jour la piste avec une observation distante (V2X).
+        L'observation V2X ne contient pas de bounding box, seulement X, Y, Z.
+        """
+        # On simule cx, cy à partir de l'état actuel pour maintenir la stabilité
+        # de la matrice de mesure du Kalman, car le véhicule distant ne voit pas notre image.
+        meas = np.array(
+            [v2x_obs["X"], v2x_obs["Y"], v2x_obs["Z"], self.current_state["cx"], self.current_state["cy"]], 
+            dtype=np.float32
+        )
+        
+        # Optionnel : Moduler measurementNoiseCov ici selon v2x_obs["confidence"]
+        
+        self.kf.correct(meas.reshape(-1, 1))
+        
+        # Le réseau a "vu" l'objet, donc on réinitialise le compteur de perte
+        self.lost_frames = 0 
+
+        post = self.kf.statePost
+        self.current_state["X"] = float(post[0, 0])
+        self.current_state["Y"] = float(post[1, 0])
+        self.current_state["Z"] = float(post[2, 0])
+        
+        # On met à jour le dernier point observé en 3D
+        self.last_observed_point_3d = np.array(
+            [v2x_obs["X"], v2x_obs["Y"], v2x_obs["Z"]], dtype=float
+        )
+
 
 class GlobalTracker:
     """
@@ -263,4 +292,80 @@ class GlobalTracker:
         self.tracks = {
             k: v for k, v in self.tracks.items() if v.lost_frames < self.max_lost_frames
         }
+
+    def fuse_v2x_observations(self, v2x_objects: list[dict], max_v2x_dist: float = 3.0) -> None:
+        """
+        Associe et fusionne les objets reçus via V2X avec les pistes locales.
+        max_v2x_dist: distance maximale en mètres pour associer deux objets.
+        """
+        if not v2x_objects or not self.tracks:
+            # S'il n'y a pas de pistes locales, on pourrait directement créer des pistes coopératives
+            # Pour l'instant, on gère l'association.
+            return 
+
+        track_ids = list(self.tracks.keys())
+        # Matrice de coût basée sur la distance spatiale
+        cost_matrix = np.full((len(track_ids), len(v2x_objects)), 1e5)
+
+        for i, tid in enumerate(track_ids):
+            track = self.tracks[tid]
+            loc_pt = np.array([track.current_state["X"], track.current_state["Y"], track.current_state["Z"]])
+
+            for j, v2x_obj in enumerate(v2x_objects):
+                # On ne fusionne que si les classes correspondent
+                if track.class_id != v2x_obj["class"]:
+                    continue
+
+                v2x_pt = np.array([v2x_obj["position"]["x"], v2x_obj["position"]["y"], v2x_obj["position"]["z"]])
+                
+                # Distance euclidienne 3D
+                dist = np.linalg.norm(loc_pt - v2x_pt)
+
+                # Gating: on refuse l'association si les objets sont trop éloignés
+                if dist < max_v2x_dist:
+                    cost_matrix[i, j] = dist
+
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+        assigned_v2x = set()
+        for r, c in zip(row_ind, col_ind):
+            if cost_matrix[r, c] < 1e5:  # Association valide
+                tid = track_ids[r]
+                v2x_obj = v2x_objects[c]
+
+                # Formatage pour KalmanTrack
+                v2x_obs_formatted = {
+                    "X": v2x_obj["position"]["x"],
+                    "Y": v2x_obj["position"]["y"],
+                    "Z": v2x_obj["position"]["z"],
+                    "confidence": v2x_obj.get("confidence", 0.5)
+                }
+                
+                # Mise à jour de la piste locale avec les données distantes
+                self.tracks[tid].update_v2x(v2x_obs_formatted)
+                assigned_v2x.add(c)
+
+        # Les objets V2X non assignés (j not in assigned_v2x) sont des objets 
+        # que l'autre véhicule voit, mais que NOUS ne voyons pas encore (ex: caché par un mur).
+        # C'est ici que l'anticipation proactive prend tout son sens.
+        for j, v2x_obj in enumerate(v2x_objects):
+            if j not in assigned_v2x:
+                self._create_cooperative_track(v2x_obj)
+
+    def _create_cooperative_track(self, v2x_obj: dict) -> None:
+        """Crée une piste fantôme basée uniquement sur la perception distante."""
+        # On simule une observation locale vide pour initialiser le Kalman
+        obs = {
+            "class": v2x_obj["class"],
+            "X": v2x_obj["position"]["x"],
+            "Y": v2x_obj["position"]["y"],
+            "Z": v2x_obj["position"]["z"],
+            "cx": -1.0,  # Hors champ de la caméra
+            "cy": -1.0,
+            "box_l": [0, 0, 0, 0],
+            "box_r": [0, 0, 0, 0]
+        }
+        self.tracks[self.next_id] = KalmanTrack(self.next_id, obs)
+        # Astuce : on pourrait ajouter un attribut "self.is_cooperative = True" dans KalmanTrack
+        self.next_id += 1
 

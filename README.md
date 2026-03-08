@@ -24,6 +24,8 @@ projetlong/
 ├── .gitignore                → Fichiers et dossiers ignorés par Git
 ├── src/                      → Code source du module de stéréovision
 │   ├── stereo_globaltrack.py → Script principal : stéréovision + tracking global + vue top-down
+│   ├── stereo_v2x_node.py   → Nœud V2X : stéréovision + partage des perceptions via MQTT (2 véhicules)
+│   ├── v2x_comms.py          → Communications V2X (client MQTT, publication/réception des objets)
 │   ├── tracker.py            → Implémentation du tracker global (Kalman + Hongrois)
 │   ├── topdown_view.py       → Visualisation en vue de dessus (Matplotlib, optionnel)
 │   ├── stereo_calibration.py → Gestion d'une calibration stéréo (chargement/rectification)
@@ -104,6 +106,41 @@ python src/stereo_globaltrack.py \
   --calibration Data/calibration/stereo_cam.npz \
   --output runs/stereo/Simulation_3/Simulation_3.mp4
 ```
+
+---
+
+### `src/stereo_v2x_node.py`
+
+**Objectif** : nœud **V2X (Vehicle-to-Everything)** simulant deux véhicules qui partagent leurs perceptions en temps réel via **MQTT**. Chaque instance lit deux vidéos stéréo + un CSV de télémétrie, détecte les objets, les suit en 3D, les transforme en coordonnées monde (CARLA), puis les publie sur le broker MQTT et affiche les objets reçus des autres véhicules.
+
+**Fonctionnalités** :
+- Détection YOLO sur les vues gauche/droite, association stéréo et tracking via `GlobalTracker`.
+- Transformation des positions 3D caméra → monde à l’aide de la télémétrie (position et yaw du véhicule).
+- Publication des objets détectés sur le topic `roadeye/v2x/<V1|V2>/perceptions`.
+- Réception des objets publiés par l’autre véhicule et affichage en overlay sur la vidéo.
+
+**Arguments** :
+- `--vid` : identifiant du véhicule (`V1` ou `V2`), obligatoire.
+- `--video-left` : chemin de la vidéo caméra gauche.
+- `--video-right` : chemin de la vidéo caméra droite.
+- `--csv` : chemin du CSV de télémétrie (colonnes `Frame`, `V1_X`, `V1_Y`, `V1_Z`, `V1_Yaw`, `V2_X`, …).
+- `--model` : modèle YOLO (défaut `yolov10n.pt`).
+- `--baseline` : baseline stéréo en mètres (défaut `0.5`).
+- `--focal` : focale en pixels (défaut `1200.0`).
+
+**Prérequis** : un broker MQTT (ex. **Mosquitto**) doit être démarré en local (voir section *Mosquitto* ci-dessous). Les deux nœuds (V1 et V2) se lancent dans **deux terminaux distincts**.
+
+---
+
+### `src/v2x_comms.py`
+
+**Objectif** : module de **communications V2X** basé sur **MQTT** (client `paho-mqtt`). Il permet à un véhicule de publier sa liste d’objets perçus et de s’abonner aux perceptions des autres véhicules.
+
+**Classe `V2XCommunicator`** :
+- **Connexion** : `connect()` se connecte au broker (par défaut `127.0.0.1:1883`) et lance la boucle réseau en arrière-plan.
+- **Publication** : `publish_perceptions(objects_list)` envoie les objets (id, classe, position 3D, confiance) sur `roadeye/v2x/<vehicle_id>/perceptions`.
+- **Réception** : abonnement au topic `roadeye/v2x/+/perceptions` ; les messages sont stockés dans un buffer et récupérés via `get_and_clear_v2x_objects()` à chaque frame.
+- **Déconnexion** : `disconnect()` arrête le client proprement.
 
 ---
 
@@ -244,6 +281,68 @@ pip install python-dotenv matplotlib
 
 Au premier lancement de `stereo_globaltrack.py`, le modèle YOLO défini par `MODEL_PATH`
 sera utilisé (ou téléchargé automatiquement par Ultralytics s’il s’agit d’un modèle connu).
+
+---
+
+### Mosquitto (broker MQTT) et script `stereo_v2x_node.py`
+
+Le script **`stereo_v2x_node.py`** fait communiquer deux véhicules (V1 et V2) via **MQTT**. Il faut installer et démarrer un broker MQTT en local, par exemple **Mosquitto**.
+
+#### Installer Mosquitto avec Homebrew
+
+```bash
+brew install mosquitto
+```
+
+#### Démarrer Mosquitto
+
+**Option A — Démarrer en arrière-plan (recommandé pour travailler)**  
+Le broker tourne en service et redémarre au boot si besoin.
+
+```bash
+brew services start mosquitto
+```
+
+**Option B — Démarrer dans un terminal (pour voir les logs)**  
+Utile pour déboguer les connexions et les messages.
+
+```bash
+mosquitto -v
+```
+
+Par défaut Mosquitto écoute sur **`localhost`**, port **`1883`** (c'est ce que utilise `v2x_comms.py`).
+
+#### Utiliser `stereo_v2x_node.py` avec deux terminaux
+
+Chaque véhicule est une instance du script. Il faut **deux terminaux** : un pour **V1**, un pour **V2**. Assurez-vous que Mosquitto est déjà démarré (voir ci-dessus).
+
+**Terminal 1 — Véhicule V1**
+
+Depuis la racine du projet :
+
+```bash
+python src/stereo_v2x_node.py \
+  --vid V1 \
+  --video-left Data/Simulation_4/video_v1_cam1_HD.mp4 \
+  --video-right Data/Simulation_4/video_v1_cam2_HD.mp4 \
+  --csv Data/Simulation_4/distances_scenario_v4.csv
+```
+
+**Terminal 2 — Véhicule V2**
+
+Dans un **second terminal**, même répertoire :
+
+```bash
+python src/stereo_v2x_node.py \
+  --vid V2 \
+  --video-left Data/Simulation_4/video_v2_cam1_HD.mp4 \
+  --video-right Data/Simulation_4/video_v2_cam2_HD.mp4 \
+  --csv Data/Simulation_4/distances_scenario_v4.csv
+```
+
+Adaptez les chemins (`Data/Simulation_V1/`, `Data/Simulation_V2/`, noms des vidéos et du CSV) à votre arborescence. Le CSV doit contenir au minimum les colonnes **`Frame`**, **`V1_X`**, **`V1_Y`**, **`V1_Z`**, **`V1_Yaw`**, **`V2_X`**, **`V2_Y`**, **`V2_Z`**, **`V2_Yaw`** (ou les noms correspondant à votre télémétrie).
+
+Les deux nœuds se connectent au broker, publient leurs perceptions et reçoivent celles de l'autre véhicule ; les objets V2X reçus s'affichent en overlay sur la fenêtre de chaque instance. Touche **`q`** pour quitter.
 
 ---
 

@@ -128,7 +128,7 @@ python src/stereo_globaltrack.py \
 - `--baseline` : baseline stéréo en mètres (défaut `0.5`).
 - `--focal` : focale en pixels (défaut `1200.0`).
 
-**Prérequis** : un broker MQTT (ex. **Mosquitto**) doit être démarré en local (voir section *Mosquitto* ci-dessous). Les deux nœuds (V1 et V2) se lancent dans **deux terminaux distincts**.
+**Prérequis** : un broker MQTT (ex. **Mosquitto**) doit être démarré en local (voir section *Mosquitto* ci-dessous). Les deux nœuds (V1 et V2) se lancent dans **deux terminaux distincts** ou via un **script de lancement** dédié (voir ci‑dessous).
 
 ---
 
@@ -343,6 +343,19 @@ python src/stereo_v2x_node.py \
 Adaptez les chemins (`Data/Simulation_V1/`, `Data/Simulation_V2/`, noms des vidéos et du CSV) à votre arborescence. Le CSV doit contenir au minimum les colonnes **`Frame`**, **`V1_X`**, **`V1_Y`**, **`V1_Z`**, **`V1_Yaw`**, **`V2_X`**, **`V2_Y`**, **`V2_Z`**, **`V2_Yaw`** (ou les noms correspondant à votre télémétrie).
 
 Les deux nœuds se connectent au broker, publient leurs perceptions et reçoivent celles de l'autre véhicule ; les objets V2X reçus s'affichent en overlay sur la fenêtre de chaque instance. Touche **`q`** pour quitter.
+
+#### Utiliser `stereo_v2x_node.py` avec le script `run_v2x.sh`
+
+Pour lancer automatiquement les deux véhicules dans des processus séparés (sans ouvrir manuellement deux terminaux), un script **`run_v2x.sh`** est fourni à la racine du projet.
+
+Depuis la racine du projet :
+
+```bash
+chmod +x run_v2x.sh
+./run_v2x.sh
+```
+
+Adaptez les chemins des vidéos/CSV à votre arborescence si nécessaire.
 
 ---
 

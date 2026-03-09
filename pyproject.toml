@@ -11,5 +11,5 @@ dependencies = [
     "lapx>=0.5.5",
     "scipy>=1.11.0",
     "paho-mqtt>=2.0.0",
-    "pandas>=2.0.0"
+    "pandas>=2.0.0",
 ]

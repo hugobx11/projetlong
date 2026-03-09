@@ -6,6 +6,17 @@ import pandas as pd
 from ultralytics import YOLO
 from pathlib import Path
 
+try:
+    import matplotlib.pyplot as plt
+except Exception:
+    plt = None
+
+# Limites fixes pour la visualisation X/Y monde (configurables via variables d'environnement)
+V2X_X_MIN = float(os.getenv("V2X_X_MIN", "-60.0"))
+V2X_X_MAX = float(os.getenv("V2X_X_MAX", "-30.0"))
+V2X_Y_MIN = float(os.getenv("V2X_Y_MIN", "30.0"))
+V2X_Y_MAX = float(os.getenv("V2X_Y_MAX", "60.0"))
+
 # Tes modules locaux
 from tracker import GlobalTracker
 from v2x_comms import V2XCommunicator
@@ -81,6 +92,24 @@ def main():
     communicator = V2XCommunicator(vehicle_id=args.vid)
     communicator.connect()
 
+    # Fenêtre Matplotlib pour visualiser la source des entités (locales vs V2X)
+    fig_sources = None
+    ax_sources = None
+    if plt is not None:
+        try:
+            plt.ion()
+            fig_sources, ax_sources = plt.subplots(num=f"Sources V2X - {args.vid}")
+            ax_sources.set_title("Entités locales (jaune) vs V2X (bleu)")
+            ax_sources.set_xlabel("X monde (m)")
+            ax_sources.set_ylabel("Y monde (m)")
+            ax_sources.grid(True, alpha=0.3)
+            ax_sources.set_aspect("equal", adjustable="box")
+            ax_sources.set_xlim(V2X_X_MIN, V2X_X_MAX)
+            ax_sources.set_ylim(V2X_Y_MIN, V2X_Y_MAX)
+        except Exception:
+            fig_sources = None
+            ax_sources = None
+
     class_mapping = {0: "Pieton", 1: "Cycliste", 2: "Voiture", 3: "Moto", 5: "Bus", 7: "Camion"}
     frame_idx = 0
 
@@ -142,6 +171,44 @@ def main():
         if hasattr(tracker, 'fuse_v2x_observations'):
             tracker.fuse_v2x_observations(v2x_objects)
 
+        # Graphe Matplotlib : un point jaune pour les entités locales, bleu pour celles reçues via MQTT
+        if ax_sources is not None and fig_sources is not None:
+            try:
+                ax_sources.cla()
+                ax_sources.set_title("Entités locales (jaune) vs V2X (bleu)")
+                ax_sources.set_xlabel("X monde (m)")
+                ax_sources.set_ylabel("Y monde (m)")
+                ax_sources.grid(True, alpha=0.3)
+                ax_sources.set_aspect("equal", adjustable="box")
+                ax_sources.set_xlim(V2X_X_MIN, V2X_X_MAX)
+                ax_sources.set_ylim(V2X_Y_MIN, V2X_Y_MAX)
+
+                # Entités détectées localement (utilisateur)
+                xs_local = [obj["position"]["x"] for obj in local_objects_for_v2x]
+                ys_local = [obj["position"]["y"] for obj in local_objects_for_v2x]
+
+                # Entités reçues via V2X / MQTT
+                xs_v2x = [obj["position"]["x"] for obj in v2x_objects]
+                ys_v2x = [obj["position"]["y"] for obj in v2x_objects]
+
+                has_local = len(xs_local) > 0
+                has_v2x = len(xs_v2x) > 0
+
+                if has_local:
+                    ax_sources.scatter(xs_local, ys_local, c="yellow", s=40, label="Local")
+                if has_v2x:
+                    ax_sources.scatter(xs_v2x, ys_v2x, c="blue", s=40, label="V2X (MQTT)")
+
+                if has_local or has_v2x:
+                    ax_sources.legend(loc="upper right")
+
+                fig_sources.canvas.draw_idle()
+                if plt is not None:
+                    plt.pause(0.001)
+            except Exception:
+                ax_sources = None
+                fig_sources = None
+
         # Affichage des objets V2X (en texte sur l'écran pour debug)
         y_offset = 30
         cv2.putText(frame_l, "Objets V2X distants recus :", (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -160,6 +227,12 @@ def main():
     cap_right.release()
     cv2.destroyAllWindows()
     communicator.disconnect()
+    if plt is not None and fig_sources is not None:
+        try:
+            plt.ioff()
+            plt.close(fig_sources)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()

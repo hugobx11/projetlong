@@ -113,6 +113,8 @@ def main():
     class_mapping = {0: "Pieton", 1: "Cycliste", 2: "Voiture", 3: "Moto", 5: "Bus", 7: "Camion"}
     frame_idx = 0
 
+    log_data = []
+
     while cap_left.isOpened() and cap_right.isOpened():
         ret_l, frame_l = cap_left.read()
         ret_r, frame_r = cap_right.read()
@@ -145,6 +147,14 @@ def main():
             if track.lost_frames == 0:  # Seulement les objets vus à cette frame
                 state = track.current_state
                 x_cam, y_cam, z_cam = state["X"], state["Y"], state["Z"]
+
+                dist_cam = float(np.sqrt(x_cam**2 + y_cam**2 + z_cam**2))
+                log_data.append({
+                    "Frame": frame_idx,
+                    "Track_ID": track_id,
+                    "Class": track.class_id,
+                    "Dist_Est": dist_cam
+                })
                 
                 # Conversion en coordonnées CARLA
                 world_xyz = transform_helper.camera_3d_to_world(x_cam, y_cam, z_cam, veh_x, veh_y, veh_z, veh_yaw)
@@ -227,6 +237,11 @@ def main():
     cap_right.release()
     cv2.destroyAllWindows()
     communicator.disconnect()
+
+    if log_data:
+        pd.DataFrame(log_data).to_csv(f"runs/predictions_{args.vid}.csv", index=False)
+        print(f"[{args.vid}] Historique des prédictions sauvegardé dans predictions_{args.vid}.csv")
+
     if plt is not None and fig_sources is not None:
         try:
             plt.ioff()

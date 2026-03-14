@@ -30,7 +30,7 @@ class StereoCalibration:
     T: np.ndarray
     image_size: tuple[int, int]
 
-    # Rectification (optionnel si stocké, sinon calculable)
+    # Rectification
     R1: Optional[np.ndarray] = None
     R2: Optional[np.ndarray] = None
     P1: Optional[np.ndarray] = None

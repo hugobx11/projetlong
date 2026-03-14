@@ -5,21 +5,15 @@ import numpy as np
 import pandas as pd
 from ultralytics import YOLO
 from pathlib import Path
+from tracker import GlobalTracker
+from v2x_comms import V2XCommunicator
+import matplotlib.pyplot as plt
 
-try:
-    import matplotlib.pyplot as plt
-except Exception:
-    plt = None
-
-# Limites fixes pour la visualisation X/Y monde (configurables via variables d'environnement)
+# Limites fixes pour la visualisation X/Y monde
 V2X_X_MIN = float(os.getenv("V2X_X_MIN", "-60.0"))
 V2X_X_MAX = float(os.getenv("V2X_X_MAX", "-30.0"))
 V2X_Y_MIN = float(os.getenv("V2X_Y_MIN", "30.0"))
 V2X_Y_MAX = float(os.getenv("V2X_Y_MAX", "60.0"))
-
-# Tes modules locaux
-from tracker import GlobalTracker
-from v2x_comms import V2XCommunicator
 
 class StereoCarlaTransform:
     """
@@ -39,10 +33,10 @@ class StereoCarlaTransform:
 
     def camera_3d_to_world(self, x_cam: float, y_cam: float, z_cam: float, 
                            x_veh: float, y_veh: float, z_veh: float, yaw: float) -> np.ndarray:
-        # 1. OpenCV (X: droite, Y: bas, Z: avant) -> Unreal Engine (X: avant, Y: droite, Z: haut)
+        # OpenCV (X: droite, Y: bas, Z: avant) -> Unreal Engine (X: avant, Y: droite, Z: haut)
         point_ue = np.array([z_cam, x_cam, -y_cam, 1.0])
 
-        # 2. Application de la position/rotation du véhicule
+        # Application de la position/rotation du véhicule
         transform_matrix = self.get_transform_matrix(x_veh, y_veh, z_veh, yaw)
         point_world = np.dot(transform_matrix, point_ue)
         
@@ -74,7 +68,7 @@ def main():
 
     print(f"[{args.vid}] Démarrage du nœud Stéréo V2X...")
 
-    # 1. Initialisations
+    # Initialisations
     yolo_model = YOLO(args.model)
     df_telemetry = pd.read_csv(args.csv)
     transform_helper = StereoCarlaTransform()
@@ -92,7 +86,7 @@ def main():
     communicator = V2XCommunicator(vehicle_id=args.vid)
     communicator.connect()
 
-    # Fenêtre Matplotlib pour visualiser la source des entités (locales vs V2X)
+    # Fenêtre Matplotlib pour visualiser la source des entités
     fig_sources = None
     ax_sources = None
     if plt is not None:
@@ -109,6 +103,12 @@ def main():
         except Exception:
             fig_sources = None
             ax_sources = None
+    
+    output_path = f"runs/video_v2x_{args.vid}.mp4"
+    fps = cap_left.get(cv2.CAP_PROP_FPS) or 25.0
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out_video = cv2.VideoWriter(output_path, fourcc, fps, (W, H))
+    print(f"[{args.vid}] L'enregistrement vidéo se fera dans : {output_path}")
 
     class_mapping = {0: "Pieton", 1: "Cycliste", 2: "Voiture", 3: "Moto", 5: "Bus", 7: "Camion"}
     frame_idx = 0
@@ -121,7 +121,7 @@ def main():
         if not ret_l or not ret_r:
             break
 
-        # 2. Récupérer la télémétrie de cette frame
+        # Récupérer la télémétrie de cette frame
         telemetry_row = df_telemetry[df_telemetry['Frame'] == frame_idx]
         if telemetry_row.empty:
             break
@@ -130,18 +130,18 @@ def main():
         veh_x, veh_y, veh_z = row[f"{args.vid}_X"], row[f"{args.vid}_Y"], row[f"{args.vid}_Z"]
         veh_yaw = row[f"{args.vid}_Yaw"]
 
-        # 3. Inférence YOLO sur les deux caméras
+        # Inférence YOLO sur les deux caméras
         res_l = yolo_model.predict(frame_l, verbose=False, conf=0.3)
         res_r = yolo_model.predict(frame_r, verbose=False, conf=0.3)
         
         dets_left = extract_detections(res_l, class_mapping)
         dets_right = extract_detections(res_r, class_mapping)
 
-        # 4. Association Stéréo et mise à jour du Tracker
+        # Association Stéréo et mise à jour du Tracker
         matched_pairs = tracker.associate_stereo(dets_left, dets_right)
         tracker.update_tracks(matched_pairs)
 
-        # 5. Transformation en coordonnées Mondiales pour l'envoi V2X
+        # Transformation en coordonnées Mondiales pour l'envoi V2X
         local_objects_for_v2x = []
         for track_id, track in tracker.tracks.items():
             if track.lost_frames == 0:  # Seulement les objets vus à cette frame
@@ -171,10 +171,10 @@ def main():
                 cv2.rectangle(frame_l, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
                 cv2.putText(frame_l, f"ID:{track_id} Z:{z_cam:.1f}m", (int(box[0]), int(box[1])-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-        # 6. Partage Réseau V2X
+        # Partage Réseau V2X
         communicator.publish_perceptions(local_objects_for_v2x)
 
-        # 7. Réception V2X et Fusion
+        # Réception V2X et Fusion
         v2x_objects = communicator.get_and_clear_v2x_objects()
         
         # (La méthode fuse_v2x_observations mettra à jour les pistes ou créera des pistes coopératives)
@@ -211,7 +211,6 @@ def main():
 
                 if has_local or has_v2x:
                     ax_sources.legend(loc="upper right")
-
                 fig_sources.canvas.draw_idle()
                 if plt is not None:
                     plt.pause(0.001)
@@ -219,14 +218,14 @@ def main():
                 ax_sources = None
                 fig_sources = None
 
-        # Affichage des objets V2X (en texte sur l'écran pour debug)
+        # Affichage des objets V2X
         y_offset = 30
         cv2.putText(frame_l, "Objets V2X distants recus :", (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         for obj in v2x_objects:
             y_offset += 25
             cv2.putText(frame_l, f"ID:{obj['id']} Classe:{obj['class']} -> X:{obj['position']['x']:.1f}, Y:{obj['position']['y']:.1f}", 
                         (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-
+        out_video.write(frame_l)
         cv2.imshow(f"Stereo V2X - {args.vid}", frame_l)
         if cv2.waitKey(30) & 0xFF == ord('q'):
             break
@@ -235,6 +234,7 @@ def main():
 
     cap_left.release()
     cap_right.release()
+    out_video.release()
     cv2.destroyAllWindows()
     communicator.disconnect()
 

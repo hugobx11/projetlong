@@ -21,7 +21,7 @@ def evaluate_predictions(gt_csv, pred_csv, vid="V1", cam="C1"):
         # Distances estimées par la stéréovision à cette frame
         preds = df_pred[df_pred['Frame'] == frame]['Dist_Est'].values
         
-        # Distances réelles (ground truth) à cette frame
+        # Distances réelles à cette frame
         gt_row = df_gt[df_gt['Frame'] == frame]
         if gt_row.empty:
             continue
@@ -50,20 +50,20 @@ def evaluate_predictions(gt_csv, pred_csv, vid="V1", cam="C1"):
     matched_gts = np.array(matched_gts)
     matched_preds = np.array(matched_preds)
     
-    # --- Calcul des Métriques ---
-    errors = matched_preds - matched_gts  # Erreur signée (pour le biais)
-    abs_errors = np.abs(errors)           # Erreur absolue
+    # Calcul des Métriques
+    errors = matched_preds - matched_gts
+    abs_errors = np.abs(errors)
     
     mae = np.mean(abs_errors)
     rmse = np.sqrt(np.mean(errors**2))
-    bias = np.mean(errors)                # Moyenne des erreurs signées
-    std_err = np.std(errors)              # Écart-type des erreurs
-    mape = np.mean(abs_errors / matched_gts) * 100  # Erreur relative moyenne (%)
+    bias = np.mean(errors)
+    std_err = np.std(errors)
+    mape = np.mean(abs_errors / matched_gts) * 100
     
     acc_1m = np.mean(abs_errors <= 1.0) * 100
     acc_2m = np.mean(abs_errors <= 2.0) * 100
     
-    # --- Affichage des métriques dans la console ---
+    # Affichage des métriques
     print(f"\n{'='*55}")
     print(f" STATISTIQUES D'ÉVALUATION (Véhicule {vid}, Caméra {cam})")
     print(f"{'='*55}")
@@ -80,10 +80,10 @@ def evaluate_predictions(gt_csv, pred_csv, vid="V1", cam="C1"):
     print(f"Précision (Erreur ≤ 2m)       : {acc_2m:.1f} %")
     print(f"{'='*55}\n")
     
-    # --- Visualisations Graphiques ---
+    # Visualisations Graphiques
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
     
-    # 1. Histogramme des erreurs
+    # Histogramme des erreurs
     axs[0].hist(abs_errors, bins=25, color='royalblue', edgecolor='black', alpha=0.8)
     axs[0].axvline(mae, color='red', linestyle='dashed', linewidth=2, label=f'MAE: {mae:.2f}m')
     axs[0].set_title("Distribution des erreurs absolues")
@@ -92,7 +92,7 @@ def evaluate_predictions(gt_csv, pred_csv, vid="V1", cam="C1"):
     axs[0].legend()
     axs[0].grid(axis='y', alpha=0.4)
     
-    # 2. Scatter plot : Prédictions vs Ground Truth
+    # Scatter plot : Prédictions vs Ground Truth
     # Ligne idéale y = x
     min_val = min(np.min(matched_gts), np.min(matched_preds))
     max_val = max(np.max(matched_gts), np.max(matched_preds))
@@ -104,7 +104,7 @@ def evaluate_predictions(gt_csv, pred_csv, vid="V1", cam="C1"):
     axs[1].legend()
     axs[1].grid(True, alpha=0.4)
     
-    # 3. Erreur en fonction de la distance
+    # Erreur en fonction de la distance
     axs[2].scatter(matched_gts, abs_errors, color='darkorange', alpha=0.6, edgecolors='k')
     axs[2].axhline(mae, color='red', linestyle='dashed', linewidth=2, label=f'MAE Globale: {mae:.2f}m')
     axs[2].set_title("Évolution de l'erreur selon la distance")
